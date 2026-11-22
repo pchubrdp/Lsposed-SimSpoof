@@ -1,221 +1,109 @@
 package com.example.simspoof;
 
+import android.os.Build;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.text.TextUtils;
-import android.os.Debug;
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.IOException;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Random;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class SimSpoofModule implements IXposedHookLoadPackage {
-    
+
     private static final String TAG = "SimSpoof";
-    
-    // Configuration - modify these values as needed
-    private static final String SPOOFED_ICCID = "89860123456789012345";
-    private static final String SPOOFED_IMSI = "310260123456789";
-    private static final String SPOOFED_PHONE_NUMBER = "+1234567890";
-    private static final String SPOOFED_LINE1_NUMBER = "1234567890";
-    private static final String SPOOFED_SUBSCRIBER_NUMBER = "1234567890";
-    private static final String SPOOFED_VOICE_MAIL_NUMBER = "123";
-    
-    // Country and Network Information
-    private static final String SPOOFED_COUNTRY_ISO = "US";
-    private static final String SPOOFED_NETWORK_COUNTRY_ISO = "US";
-    private static final String SPOOFED_SIM_COUNTRY_ISO = "US";
-    private static final String SPOOFED_NETWORK_OPERATOR = "310260";  // T-Mobile US
-    private static final String SPOOFED_NETWORK_OPERATOR_NAME = "T-Mobile";
-    private static final String SPOOFED_SIM_OPERATOR = "310260";
-    private static final String SPOOFED_SIM_OPERATOR_NAME = "T-Mobile";
-    
-    // Device Identifiers
-    private static final String SPOOFED_DEVICE_ID = "123456789012345";  // IMEI
-    private static final String SPOOFED_DEVICE_SOFTWARE_VERSION = "01";
-    private static final String SPOOFED_GROUP_ID_LEVEL1 = "0";
-    
-    // Detection strings to block (LSPosed/Xposed related)
-    private static final String[] DETECTION_STRINGS = {
-        "xposed", "lsposed", "edxposed", "taichi", "virtualxposed",
-        "de.robv.android.xposed", "org.lsposed", "io.github.lsposed",
-        "xposed_init", "XposedBridge", "XposedHelpers", "LSPosed",
-        "lspd", "riru", "zygisk"
-    };
-    
-    private static final String[] ROOT_BINARIES = {
-        "su", "busybox", "supersu", "Superuser.apk", "magisk"
-    };
-    
-    // System paths to hide (like Hide-My-Applist)
-    private static final String[] SENSITIVE_PATHS = {
-        "/proc/self/maps", "/proc/self/task", "/proc/self/status",
-        "/system/framework", "/system/bin/app_process", "/data/misc/riru",
-        "/data/adb", "/sbin", "/system/addon.d", "/system/etc/init",
-        "/vendor/bin/hw", "/data/misc/zygisk"
-    };
+
+    // Set your desired spoofed number here (include country code if the target app expects +91...)
+    private static final String SPOOFED_NUMBER = "+919876543210";
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
-        // Hook ONLY System Framework like Hide-My-Applist
-        if (!lpparam.packageName.equals("android")) {
-            return; // Only hook system framework
+        // Do NOT restrict to "android" - hook whatever target apps you enable in LSPosed Scope
+        if (lpparam.packageName.equals("android")) {
+            return;
         }
-        
-        XposedBridge.log(TAG + ": Hooking System Framework: " + lpparam.packageName);
-        
-        // All hooks applied to system framework for universal coverage
-        hookTelephonyManager(lpparam);
-        hookSubscriptionManager(lpparam);
-        hookSystemFramework(lpparam);
-        hookStringComparisons(lpparam);
-        hookFileOperations(lpparam);
-        hookProcessOperations(lpparam);
-        hookSystemCalls(lpparam);
-        hookRootDetection(lpparam);
-        hookDebuggerDetection(lpparam);
+
+        XposedBridge.log(TAG + ": Active in " + lpparam.packageName);
+        hookPhoneNumberOnly();
     }
-    
-    private void hookSystemFramework(XC_LoadPackage.LoadPackageParam lpparam) {
+
+    private void hookPhoneNumberOnly() {
+        // 1. TelephonyManager.getLine1Number()
         try {
-            // Hook PackageManagerService like Hide-My-Applist
-            Class<?> packageManagerServiceClass = XposedHelpers.findClass(
-                "com.android.server.pm.PackageManagerService", lpparam.classLoader);
-            
-            // Hook getInstalledPackages methods
-            XposedHelpers.findAndHookMethod(packageManagerServiceClass, "getInstalledPackages", 
-                long.class, int.class,
-                new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod(
+                TelephonyManager.class,
+                "getLine1Number",
+                new XC_MethodReplacement() {
                     @Override
-                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        @SuppressWarnings("unchecked")
-                        List<Object> packages = (List<Object>) param.getResult();
-                        if (packages != null) {
-                            filterSensitivePackages(packages);
-                        }
+                    protected Object replaceHookedMethod(MethodHookParam param) {
+                        XposedBridge.log(TAG + ": Spoofed getLine1Number()");
+                        return SPOOFED_NUMBER;
                     }
-                });
-                
-        } catch (Exception e) {
-            XposedBridge.log(TAG + ": Error hooking system framework: " + e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void filterSensitivePackages(List<Object> packages) {
-        try {
-            packages.removeIf(pkg -> {
-                try {
-                    Object packageInfo = pkg;
-                    String packageName = (String) XposedHelpers.getObjectField(packageInfo, "packageName");
-                    
-                    // Hide LSPosed/Xposed related packages
-                    for (String detectionStr : DETECTION_STRINGS) {
-                        if (packageName != null && packageName.contains(detectionStr)) {
-                            XposedBridge.log(TAG + ": Hiding package: " + packageName);
-                            return true;
-                        }
-                    }
-                    return false;
-                } catch (Exception e) {
-                    return false;
                 }
-            });
-        } catch (Exception e) {
-            XposedBridge.log(TAG + ": Error filtering packages: " + e.getMessage());
+            );
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": getLine1Number() hook skipped: " + t.getMessage());
+        }
+
+        // 2. Hidden overload TelephonyManager.getLine1Number(int subId) used on Android 12 / MIUI 14
+        try {
+            XposedHelpers.findAndHookMethod(
+                TelephonyManager.class,
+                "getLine1Number",
+                int.class,
+                new XC_MethodReplacement() {
+                    @Override
+                    protected Object replaceHookedMethod(MethodHookParam param) {
+                        XposedBridge.log(TAG + ": Spoofed getLine1Number(subId=" + param.args[0] + ")");
+                        return SPOOFED_NUMBER;
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": getLine1Number(int) hook skipped: " + t.getMessage());
+        }
+
+        // 3. SubscriptionInfo.getNumber() (works cleanly because getActiveSubscriptionInfoList is NOT nulled)
+        try {
+            XposedHelpers.findAndHookMethod(
+                SubscriptionInfo.class,
+                "getNumber",
+                new XC_MethodReplacement() {
+                    @Override
+                    protected Object replaceHookedMethod(MethodHookParam param) {
+                        XposedBridge.log(TAG + ": Spoofed SubscriptionInfo.getNumber()");
+                        return SPOOFED_NUMBER;
+                    }
+                }
+            );
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": SubscriptionInfo.getNumber() hook skipped: " + t.getMessage());
+        }
+
+        // 4. SubscriptionManager.getPhoneNumber(int) for Android 13+ MIUI ports (skipped safely on stock Android 12)
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                XposedHelpers.findAndHookMethod(
+                    SubscriptionManager.class,
+                    "getPhoneNumber",
+                    int.class,
+                    new XC_MethodReplacement() {
+                        @Override
+                        protected Object replaceHookedMethod(MethodHookParam param) {
+                            XposedBridge.log(TAG + ": Spoofed SubscriptionManager.getPhoneNumber(int)");
+                            return SPOOFED_NUMBER;
+                        }
+                    }
+                );
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": getPhoneNumber(int) hook skipped: " + t.getMessage());
+            }
         }
     }
-    
-    private void hookTelephonyManager(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            // === SIM Card Information ===
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSimSerialNumber", 
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getSimSerialNumber (ICCID)");
-                        return SPOOFED_ICCID;
-                    }
-                });
-                
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSubscriberId", 
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getSubscriberId (IMSI)");
-                        return SPOOFED_IMSI;
-                    }
-                });
-            
-            // === Phone Number Information ===
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getLine1Number",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getLine1Number (Phone Number)");
-                        return SPOOFED_LINE1_NUMBER;
-                    }
-                });
-                
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getVoiceMailNumber",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getVoiceMailNumber");
-                        return SPOOFED_VOICE_MAIL_NUMBER;
-                    }
-                });
-            
-            // === Country Information ===
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getNetworkCountryIso",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getNetworkCountryIso");
-                        return SPOOFED_NETWORK_COUNTRY_ISO;
-                    }
-                });
-                
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSimCountryIso",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getSimCountryIso");
-                        return SPOOFED_SIM_COUNTRY_ISO;
-                    }
-                });
-            
-            // === Network Operator Information ===
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getNetworkOperator",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getNetworkOperator");
-                        return SPOOFED_NETWORK_OPERATOR;
-                    }
-                });
-                
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getNetworkOperatorName",
-                new XC_MethodReplacement() {
-                    @Override
-                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
-                        XposedBridge.log(TAG + ": Spoofing getNetworkOperatorName");
-                        return SPOOFED_NETWORK_OPERATOR_NAME;
-                    }
-                });
-                
-            XposedHelpers.findAndHookMethod(TelephonyManager.class, "getSimOperator",
-                new XC_MethodReplacement() {
+}
+) {
                     @Override
                     protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
                         XposedBridge.log(TAG + ": Spoofing getSimOperator");
